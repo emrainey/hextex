@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hextex"
+# version = "0.1.0"
+dynamic = ["version"]
+description = "A hex viewer in Textual"
+readme = 'README.md'
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Erik Rainey", email = "erik.rainey@gmail.com" }]
+maintainers = [{ name = "Erik Rainey", email = "erik.rainey@gmail.com" }]
+keywords = ["python", "hex edit", "textual"]
+dependencies = ["textual", "argparse"]
+classifiers = [
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Utilities",
+    "Development Status :: 3 - Alpha",
+]
+
+[project.optional-dependencies]
+dev = ["black", "pytest", "flake8"]
+
+[project.scripts]
+hextex = "hextex.cli:main"
