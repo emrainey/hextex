@@ -142,9 +142,6 @@ class HexTex(App):
         if event.key == "q":
             self.exit()
 
-        if event.key == "l":
-            self.action_toggle_endianness()
-
         if event.key == "up":
             new_offset = max(
                 0, min(self.offset - self.columns, self.binfile.size - self.columns)
