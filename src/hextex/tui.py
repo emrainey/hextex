@@ -180,7 +180,7 @@ class HexTex(App):
         def new_offset(offset_str: str | None) -> None:
             try:
                 new_offset = int(offset_str, 16)
-                if 0 <= new_offset < self.binfile.size - self.columns:
+                if 0 <= new_offset < self.binfile.size:
                     self.offset = new_offset & ~0xF
                     self.refresh_display()
             except ValueError:
