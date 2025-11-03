@@ -3,7 +3,7 @@ from .bin import BinFile
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.screen import ModalScreen
-from textual.widgets import Header, Footer, DataTable, Static, Label, Input, Button
+from textual.widgets import Header, Footer, DataTable, Static, Label, Input
 from textual.containers import Container, Grid
 
 
