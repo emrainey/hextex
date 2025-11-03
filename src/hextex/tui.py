@@ -1,3 +1,4 @@
+import struct
 import textual
 from .bin import BinFile
 from rich.text import Text
@@ -51,11 +52,12 @@ class HexTex(App):
     columns: int = int(16)
     rows: int = int(20)
 
-    def __init__(self, bf: BinFile) -> None:
+    def __init__(self, bf: BinFile, width: int) -> None:
         super().__init__()
         self.binfile = bf
         self.offset = int(0)
         self.count = self.columns * self.rows
+        self.width = width
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -66,34 +68,27 @@ class HexTex(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        stats = self.query_one("#stats", Static)
-        stats.update(
-            f"File {self.binfile.path} - Offset: {self.offset}/{self.binfile.size} bytes"
-        )
         hex_table = self.query_one("#hex-view", DataTable)
-        hex_table.clear()
         hex_table.cursor_type = "cell"
-        columns = [f"0x{i:02X}" for i in range(self.columns)]
+        columns = []
+        if self.width == 1:
+            columns = [f"0x{i:02X}" for i in range(self.columns)]
+        elif self.width == 2:
+            columns = [f"0x{i:04X}" for i in range(0, self.columns, 2)]
+        elif self.width == 4:
+            columns = [f"0x{i:08X}" for i in range(0, self.columns, 4)]
+        elif self.width == 8:
+            columns = [f"0x{i:016X}" for i in range(0, self.columns, 8)]
         hex_table.add_columns(*columns)
-        # self.rows = max(4, hex_table.size.height - 1)
 
         ascii_table = self.query_one("#ascii-view", DataTable)
-        ascii_table.clear()
         ascii_table.cursor_type = "cell"
         ascii_table.add_columns("ASCII")
         self.refresh_display()
 
-    # def on_resize(self) -> None:
-    #     """Recalculate when window is resized."""
-    #     hex_table = self.query_one("#hex-view", DataTable)
-    #     new_rows = max(1, hex_table.size.height - 3)  # Adjust for columns and borders
-    #     # self.notify(f"on_resize -> {hex_table.size.width}x{hex_table.size.height}")
-    #     if new_rows < self.rows:
-    #         self.rows = new_rows
-    #         self.refresh_display()
-
     def refresh_display(self):
         stats = self.query_one("#stats", Static)
+        main_view = self.query_one("#main-view", Container)
         hex_table = self.query_one("#hex-view", DataTable)
         ascii_table = self.query_one("#ascii-view", DataTable)
 
@@ -101,7 +96,7 @@ class HexTex(App):
         ascii_table.clear()
 
         stats.update(
-            f"File {self.binfile.path} | {self.columns}x{self.rows} Offset: 0x{self.offset:08X} => {self.offset}/{self.binfile.size} bytes"
+            f"File {self.binfile.path} | {self.columns}x{self.rows} Offset: 0x{self.offset:08X} => {self.offset}/{self.binfile.size} bytes | M:{main_view.size} H:{hex_table.size}"
         )
 
         for row in range(self.rows):
@@ -109,9 +104,26 @@ class HexTex(App):
             if row_offset >= self.binfile.size:
                 break
             chunk = self.binfile.load_chunk(row_offset, self.columns)
-            hex_values = [f"{b:02X}" for b in chunk]
+            hex_values = []
+            # use struct to pack the bytes together correctly based on the width selected
+            if self.width == 1:
+                hex_values = [f"{b:02X}" for b in chunk]
+            elif self.width == 2:
+                uint16_values = struct.unpack(
+                    f"<{len(chunk)//2}H", chunk[: len(chunk) // 2 * 2]
+                )
+                hex_values = [f"{b:04X}" for b in uint16_values]
+            elif self.width == 4:
+                uint32_values = struct.unpack(
+                    f"<{len(chunk)//4}I", chunk[: len(chunk) // 4 * 4]
+                )
+                hex_values = [f"{b:08X}" for b in uint32_values]
+            elif self.width == 8:
+                uint64_values = struct.unpack(
+                    f"<{len(chunk)//8}Q", chunk[: len(chunk) // 8 * 8]
+                )
+                hex_values = [f"{b:016X}" for b in uint64_values]
             label = Text(f"{row_offset:08X}", style="#B0FC38 italic")
-            # assert len(hex_values) == self.columns, "Hex values length mismatch"
             ascii_values = [chr(b) if 32 <= b <= 126 else "." for b in chunk]
             hex_table.add_row(*hex_values, label=label)
             ascii_table.add_row("".join(ascii_values), label=label)
