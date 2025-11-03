@@ -1,5 +1,4 @@
 import struct
-import textual
 from .bin import BinFile
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -45,12 +44,14 @@ class HexTex(App):
 
     BINDINGS = [
         ("q", "quit", "Quit"),
+        ("l", "toggle_endianness", "Toggle Endianness"),
     ]
 
     offset: int
     count: int
     columns: int = int(16)
     rows: int = int(20)
+    little_endian: bool = True  # Default to little-endian
 
     def __init__(self, bf: BinFile, width: int) -> None:
         super().__init__()
@@ -95,8 +96,11 @@ class HexTex(App):
         hex_table.clear()
         ascii_table.clear()
 
+        endian_mode = "LE" if self.little_endian else "BE"
         stats.update(
-            f"File {self.binfile.path} | {self.columns}x{self.rows} Offset: 0x{self.offset:08X} => {self.offset}/{self.binfile.size} bytes | M:{main_view.size} H:{hex_table.size}"
+            f"File {self.binfile.path} | {self.columns}x{self.rows} "
+            f"Offset: 0x{self.offset:08X} => {self.offset}/{self.binfile.size} bytes | "
+            f"{endian_mode} | M:{main_view.size} H:{hex_table.size}"
         )
 
         for row in range(self.rows):
@@ -106,21 +110,22 @@ class HexTex(App):
             chunk = self.binfile.load_chunk(row_offset, self.columns)
             hex_values = []
             # use struct to pack the bytes together correctly based on the width selected
+            endian_prefix = "<" if self.little_endian else ">"
             if self.width == 1:
                 hex_values = [f"{b:02X}" for b in chunk]
             elif self.width == 2:
                 uint16_values = struct.unpack(
-                    f"<{len(chunk)//2}H", chunk[: len(chunk) // 2 * 2]
+                    f"{endian_prefix}{len(chunk)//2}H", chunk[: len(chunk) // 2 * 2]
                 )
                 hex_values = [f"{b:04X}" for b in uint16_values]
             elif self.width == 4:
                 uint32_values = struct.unpack(
-                    f"<{len(chunk)//4}I", chunk[: len(chunk) // 4 * 4]
+                    f"{endian_prefix}{len(chunk)//4}I", chunk[: len(chunk) // 4 * 4]
                 )
                 hex_values = [f"{b:08X}" for b in uint32_values]
             elif self.width == 8:
                 uint64_values = struct.unpack(
-                    f"<{len(chunk)//8}Q", chunk[: len(chunk) // 8 * 8]
+                    f"{endian_prefix}{len(chunk)//8}Q", chunk[: len(chunk) // 8 * 8]
                 )
                 hex_values = [f"{b:016X}" for b in uint64_values]
             label = Text(f"{row_offset:08X}", style="#B0FC38 italic")
@@ -128,9 +133,17 @@ class HexTex(App):
             hex_table.add_row(*hex_values, label=label)
             ascii_table.add_row("".join(ascii_values), label=label)
 
+    def action_toggle_endianness(self):
+        """Toggle between little-endian and big-endian display."""
+        self.little_endian = not self.little_endian
+        self.refresh_display()
+
     def on_key(self, event):
         if event.key == "q":
             self.exit()
+
+        if event.key == "l":
+            self.action_toggle_endianness()
 
         if event.key == "up":
             new_offset = max(
