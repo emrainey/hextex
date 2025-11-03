@@ -2,14 +2,49 @@ import struct
 from .bin import BinFile
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, DataTable, Static
-from textual.containers import Container
+from textual.screen import ModalScreen
+from textual.widgets import Header, Footer, DataTable, Static, Label, Input, Button
+from textual.containers import Container, Grid
+
+
+class GotoScreen(ModalScreen[str]):
+    """A simple screen to prompt for an offset to go to."""
+
+    def compose(self) -> ComposeResult:
+        yield Grid(
+            Label("Go To Offset", id="goto-label"),
+            Input(
+                placeholder="Offset (hex)",
+                type="text",
+                id="offset-input",
+                restrict=r"[0-9a-fA-F]+",
+                validate_on=["submitted"],
+            ),
+            # Button("Go", id="go-button", variant="primary"),
+            # Button("Cancel", id="cancel-button", variant="error"),
+            id="dialog",
+        )
+
+    def on_key(self, event) -> None:
+        if event.key == "enter":
+            input = self.query_one("#offset-input", Input)
+            self.dismiss(input.value)
 
 
 class HexTex(App):
     CSS = """
     Screen {
         align: center middle;
+    }
+    #dialog {
+        grid-size: 2;
+        grid-gutter: 1 2;
+        grid-rows: 1fr 3;
+        padding: 0 1;
+        width: 60;
+        height: 11;
+        border: thick $background 80%;
+        background: $surface;
     }
     #stats {
         dock: top;
@@ -45,6 +80,7 @@ class HexTex(App):
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("l", "toggle_endianness", "Toggle Endianness"),
+        ("g", "goto_offset", "Go to Offset"),
     ]
 
     offset: int
@@ -137,6 +173,20 @@ class HexTex(App):
         """Toggle between little-endian and big-endian display."""
         self.little_endian = not self.little_endian
         self.refresh_display()
+
+    def action_goto_offset(self):
+        """Prompt the user to enter an offset to go to."""
+
+        def new_offset(offset_str: str | None) -> None:
+            try:
+                new_offset = int(offset_str, 16)
+                if 0 <= new_offset < self.binfile.size - self.columns:
+                    self.offset = new_offset & ~0xF
+                    self.refresh_display()
+            except ValueError:
+                pass  # Ignore invalid input
+
+        self.push_screen(GotoScreen(), new_offset)
 
     def on_key(self, event):
         if event.key == "q":
