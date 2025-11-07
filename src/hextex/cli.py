@@ -3,8 +3,6 @@ import argparse
 from typing import List, Optional
 from . import HexTex, BinFile
 
-width_choices = [1, 2, 4, 8]
-
 
 def add_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser("HEXTEX - Hex Editor in Textual")
@@ -14,8 +12,8 @@ def add_parser() -> argparse.ArgumentParser:
         "-w",
         "--width",
         type=int,
-        choices=width_choices,
-        default=width_choices[0],
+        choices=HexTex.WIDTH_OPTIONS,
+        default=HexTex.WIDTH_OPTIONS[0],
         help="Display width",
     )
     return parser

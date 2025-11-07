@@ -82,15 +82,15 @@ class HexTex(App):
     """
 
     BINDINGS = [
-        # ("ctrl+q", "quit", "Quit"),
         ("ctrl+l", "toggle_endianness", "Toggle Endianness"),
         ("ctrl+g", "goto_offset", "Go to Offset"),
         ("ctrl+w", "toggle_width", "Toggle Width"),
     ]
 
     cell_count: int
-    columns: int = int(16)
-    row_depth: int = int(16)
+    FIXED_ROW_WIDTH: int = int(16)
+    columns: int = FIXED_ROW_WIDTH
+    row_depth: int = FIXED_ROW_WIDTH
     rows: int = int(0)
     little_endian: bool = True  # Default to little-endian
     width: int = int(1)
@@ -99,7 +99,8 @@ class HexTex(App):
     # The byte offset of the DataTable in the top level corner of the view
     offset: int = int(0)
     ignore_change: int = int(0)
-    keys: List[ColumnKey] | None = None
+    hex_keys: List[ColumnKey] | None = None
+    ascii_keys: List[ColumnKey] | None = None
     hex_table: DataTable
     ascii_table: DataTable
 
@@ -107,7 +108,9 @@ class HexTex(App):
         super().__init__()
         self.binfile = bf
         self.cell_count = len(self.binfile.data)
-        self.width = self.WIDTH_OPTIONS[self.index]
+        self.width = width
+        self.index = self.WIDTH_OPTIONS.index(width)
+        self.columns = 16 // self.width
         self.row_depth = self.columns * self.width
         self.rows = len(self.binfile.data) // self.columns
         print("Rows: ", self.rows, " Cell Count: ", self.cell_count)
@@ -117,40 +120,56 @@ class HexTex(App):
         yield Header(show_clock=True)
         yield Static(id="stats")
         with Container(id="main-view"):
-            self.hex_table = DataTable(id="hex-view", zebra_stripes=True)
+            self.hex_table = DataTable(
+                name="Hex View", id="hex-view", zebra_stripes=True
+            )
             yield self.hex_table
-            self.ascii_table = DataTable(id="ascii-view", zebra_stripes=True)
+            self.ascii_table = DataTable(
+                name="ASCII View", id="ascii-view", zebra_stripes=True, cell_padding=0
+            )
             yield self.ascii_table
         yield Footer()
 
-    def set_columns(self, hex_table: DataTable) -> None:
-        hex_table.clear()
-        if self.keys is not None:
-            for key in self.keys:
-                hex_table.remove_column(key)
-        hex_table.cursor_type = "cell"
-        column_headers = []
+    def set_columns(self) -> None:
+        """Sets up the DataTable columns based on the current width setting"""
+        self.hex_table.clear()
+        self.ascii_table.clear()
+        if self.hex_keys is not None:
+            for key in self.hex_keys:
+                self.hex_table.remove_column(key)
+        if self.ascii_keys is not None:
+            for key in self.ascii_keys:
+                self.ascii_table.remove_column(key)
+        self.hex_table.cursor_type = "cell"
+        self.ascii_table.cursor_type = "cell"
+        hex_headers: List[str]
+        ascii_headers: List[str]
         if self.width == 1:
             self.columns = int(16)
-            column_headers = [f"0x{i:02X}" for i in range(self.columns)]
+            hex_headers = [f"0x{i:02X}" for i in range(self.FIXED_ROW_WIDTH)]
         elif self.width == 2:
             self.columns = int(8)
-            column_headers = [f"0x{i:04X}" for i in range(0, self.columns, 2)]
+            hex_headers = [f"0x{i:04X}" for i in range(0, self.FIXED_ROW_WIDTH, 2)]
         elif self.width == 4:
             self.columns = int(4)
-            column_headers = [f"0x{i:08X}" for i in range(0, self.columns, 4)]
+            hex_headers = [f"0x{i:08X}" for i in range(0, self.FIXED_ROW_WIDTH, 4)]
         elif self.width == 8:
             self.columns = int(2)
-            column_headers = [f"0x{i:016X}" for i in range(0, self.columns, 8)]
-        self.keys = hex_table.add_columns(*column_headers)
-        print("There are now ", len(self.keys), " columns.")
+            hex_headers = [f"0x{i:016X}" for i in range(0, self.FIXED_ROW_WIDTH, 8)]
+        self.hex_keys = self.hex_table.add_columns(*hex_headers)
+        ascii_headers = [f"{i:X}" for i in range(self.FIXED_ROW_WIDTH)]
+        self.ascii_keys = self.ascii_table.add_columns(*ascii_headers)
+        assert self.hex_keys is not None and self.ascii_keys is not None
+        assert (
+            len(hex_headers) == self.columns
+        ), f"Hex column count mismatch! len={len(hex_headers)}, colums={self.columns}"
 
     def on_mount(self) -> None:
         """Set up the Textual UI elements"""
-        self.set_columns(self.hex_table)
-        self.ascii_table.cursor_type = "cell"
-        self.ascii_table.add_columns("ASCII")
+        self.ignore_change = True
+        self.set_columns()
         self.refresh_display()
+        self.ignore_change = False
 
     def refresh_display(self):
         stats = self.query_one("#stats", Static)
@@ -166,27 +185,24 @@ class HexTex(App):
             if self.width == 1:
                 hex_values = [f"{b:02X}" for b in chunk]
             elif self.width == 2:
-                uint16_values = struct.unpack(
-                    f"{endian_prefix}{len(chunk)//2}H", chunk[: len(chunk) // 2 * 2]
-                )
+                uint16_values = struct.unpack(f"{endian_prefix}{len(chunk)//2}H", chunk)
                 hex_values = [f"{b:04X}" for b in uint16_values]
             elif self.width == 4:
-                uint32_values = struct.unpack(
-                    f"{endian_prefix}{len(chunk)//4}I", chunk[: len(chunk) // 4 * 4]
-                )
+                uint32_values = struct.unpack(f"{endian_prefix}{len(chunk)//4}I", chunk)
                 hex_values = [f"{b:08X}" for b in uint32_values]
             elif self.width == 8:
-                uint64_values = struct.unpack(
-                    f"{endian_prefix}{len(chunk)//8}Q", chunk[: len(chunk) // 8 * 8]
-                )
+                uint64_values = struct.unpack(f"{endian_prefix}{len(chunk)//8}Q", chunk)
                 hex_values = [f"{b:016X}" for b in uint64_values]
             label = Text(f"{row_offset:08X}", style="#B0FC38 italic")
             ascii_values = [chr(b) if 32 <= b <= 126 else "." for b in chunk]
             self.hex_table.add_row(*hex_values, label=label)
-            self.ascii_table.add_row("".join(ascii_values), label=label)
+            self.ascii_table.add_row(*ascii_values, label=label)
         row_to_show = self.offset // self.row_depth
         col_to_show = (self.offset % self.row_depth) // self.width
         self.hex_table.move_cursor(
+            row=row_to_show, column=col_to_show, animate=False, scroll=True
+        )
+        self.ascii_table.move_cursor(
             row=row_to_show, column=col_to_show, animate=False, scroll=True
         )
         stats.update(
@@ -196,15 +212,20 @@ class HexTex(App):
     def action_toggle_endianness(self):
         """Toggle between little-endian and big-endian display."""
         self.little_endian = not self.little_endian
+        self.ignore_change = True
+        self.set_columns()
         self.refresh_display()
+        self.ignore_change = False
 
     def action_toggle_width(self):
         """Cycle between width options."""
         current_index = self.WIDTH_OPTIONS.index(self.width)
         new_index = (current_index + 1) % len(self.WIDTH_OPTIONS)
         self.width = self.WIDTH_OPTIONS[new_index]
-        self.set_columns(self.hex_table)
+        self.ignore_change = True
+        self.set_columns()
         self.refresh_display()
+        self.ignore_change = False
 
     def action_goto_offset(self):
         """Prompt the user to enter an offset to go to."""
@@ -227,6 +248,8 @@ class HexTex(App):
 
     def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
         """if the event is from the hex table, update the ascii table and vice versa"""
+        if self.ignore_change:
+            return
         if event.data_table.id == "hex-view":
             row = event.coordinate.row
             column = event.coordinate.column
