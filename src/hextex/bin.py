@@ -6,11 +6,13 @@ class BinFile:
     path: str
     offset: int
     size: int
+    data: bytes
 
     def __init__(self, filepath: str):
         self.path = pathlib.Path(filepath).resolve().as_posix()
         # get the number of bytes in the file.
         self.offset = int(0)
+        self.data = bytes()
         self.size = os.path.getsize(filepath)
 
     def load_chunk(self, offset: int, count: int) -> bytes:
@@ -30,3 +32,8 @@ class BinFile:
             file.seek(offset)
             file.write(data)
             return True
+
+    def load(self) -> None:
+        with open(self.path, "rb") as file:
+            # the whole thing, all at once!
+            self.data = file.read()

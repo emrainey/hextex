@@ -1,10 +1,14 @@
 import struct
+from typing import List
+
+from textual.events import Event
 from .bin import BinFile
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.screen import ModalScreen
 from textual.widgets import Header, Footer, DataTable, Static, Label, Input
 from textual.containers import Container, Grid
+from textual.widgets.data_table import ColumnKey
 
 
 class GotoScreen(ModalScreen[str]):
@@ -78,72 +82,84 @@ class HexTex(App):
     """
 
     BINDINGS = [
-        ("q", "quit", "Quit"),
-        ("l", "toggle_endianness", "Toggle Endianness"),
-        ("g", "goto_offset", "Go to Offset"),
+        # ("ctrl+q", "quit", "Quit"),
+        ("ctrl+l", "toggle_endianness", "Toggle Endianness"),
+        ("ctrl+g", "goto_offset", "Go to Offset"),
+        ("ctrl+w", "toggle_width", "Toggle Width"),
     ]
 
-    offset: int
-    count: int
+    cell_count: int
     columns: int = int(16)
-    rows: int = int(20)
+    row_depth: int = int(16)
+    rows: int = int(0)
     little_endian: bool = True  # Default to little-endian
+    width: int = int(1)
+    index: int = int(0)
+    WIDTH_OPTIONS: List[int] = [1, 2, 4, 8]
+    # The byte offset of the DataTable in the top level corner of the view
+    offset: int = int(0)
+    ignore_change: int = int(0)
+    keys: List[ColumnKey] | None = None
+    hex_table: DataTable
+    ascii_table: DataTable
 
     def __init__(self, bf: BinFile, width: int) -> None:
         super().__init__()
         self.binfile = bf
-        self.offset = int(0)
-        self.count = self.columns * self.rows
-        self.width = width
+        self.cell_count = len(self.binfile.data)
+        self.width = self.WIDTH_OPTIONS[self.index]
+        self.row_depth = self.columns * self.width
+        self.rows = len(self.binfile.data) // self.columns
+        print("Rows: ", self.rows, " Cell Count: ", self.cell_count)
 
     def compose(self) -> ComposeResult:
+        """Layout the Textual UI elements"""
         yield Header(show_clock=True)
         yield Static(id="stats")
         with Container(id="main-view"):
-            yield DataTable(id="hex-view", zebra_stripes=True)
-            yield DataTable(id="ascii-view", zebra_stripes=True)
+            self.hex_table = DataTable(id="hex-view", zebra_stripes=True)
+            yield self.hex_table
+            self.ascii_table = DataTable(id="ascii-view", zebra_stripes=True)
+            yield self.ascii_table
         yield Footer()
 
-    def on_mount(self) -> None:
-        hex_table = self.query_one("#hex-view", DataTable)
+    def set_columns(self, hex_table: DataTable) -> None:
+        hex_table.clear()
+        if self.keys is not None:
+            for key in self.keys:
+                hex_table.remove_column(key)
         hex_table.cursor_type = "cell"
-        columns = []
+        column_headers = []
         if self.width == 1:
-            columns = [f"0x{i:02X}" for i in range(self.columns)]
+            self.columns = int(16)
+            column_headers = [f"0x{i:02X}" for i in range(self.columns)]
         elif self.width == 2:
-            columns = [f"0x{i:04X}" for i in range(0, self.columns, 2)]
+            self.columns = int(8)
+            column_headers = [f"0x{i:04X}" for i in range(0, self.columns, 2)]
         elif self.width == 4:
-            columns = [f"0x{i:08X}" for i in range(0, self.columns, 4)]
+            self.columns = int(4)
+            column_headers = [f"0x{i:08X}" for i in range(0, self.columns, 4)]
         elif self.width == 8:
-            columns = [f"0x{i:016X}" for i in range(0, self.columns, 8)]
-        hex_table.add_columns(*columns)
+            self.columns = int(2)
+            column_headers = [f"0x{i:016X}" for i in range(0, self.columns, 8)]
+        self.keys = hex_table.add_columns(*column_headers)
+        print("There are now ", len(self.keys), " columns.")
 
-        ascii_table = self.query_one("#ascii-view", DataTable)
-        ascii_table.cursor_type = "cell"
-        ascii_table.add_columns("ASCII")
+    def on_mount(self) -> None:
+        """Set up the Textual UI elements"""
+        self.set_columns(self.hex_table)
+        self.ascii_table.cursor_type = "cell"
+        self.ascii_table.add_columns("ASCII")
         self.refresh_display()
 
     def refresh_display(self):
         stats = self.query_one("#stats", Static)
-        main_view = self.query_one("#main-view", Container)
-        hex_table = self.query_one("#hex-view", DataTable)
-        ascii_table = self.query_one("#ascii-view", DataTable)
-
-        hex_table.clear()
-        ascii_table.clear()
-
+        self.hex_table.clear()
+        self.ascii_table.clear()
         endian_mode = "LE" if self.little_endian else "BE"
-        stats.update(
-            f"File {self.binfile.path} | {self.columns}x{self.rows} "
-            f"Offset: 0x{self.offset:08X} => {self.offset}/{self.binfile.size} bytes | "
-            f"{endian_mode} | M:{main_view.size} H:{hex_table.size}"
-        )
-
         for row in range(self.rows):
-            row_offset = self.offset + (row * self.columns)
-            if row_offset >= self.binfile.size:
-                break
-            chunk = self.binfile.load_chunk(row_offset, self.columns)
+            row_offset = row * self.row_depth
+            chunk = self.binfile.data[row_offset : row_offset + self.row_depth]
             hex_values = []
             # use struct to pack the bytes together correctly based on the width selected
             endian_prefix = "<" if self.little_endian else ">"
@@ -166,12 +182,28 @@ class HexTex(App):
                 hex_values = [f"{b:016X}" for b in uint64_values]
             label = Text(f"{row_offset:08X}", style="#B0FC38 italic")
             ascii_values = [chr(b) if 32 <= b <= 126 else "." for b in chunk]
-            hex_table.add_row(*hex_values, label=label)
-            ascii_table.add_row("".join(ascii_values), label=label)
+            self.hex_table.add_row(*hex_values, label=label)
+            self.ascii_table.add_row("".join(ascii_values), label=label)
+        row_to_show = self.offset // self.row_depth
+        col_to_show = (self.offset % self.row_depth) // self.width
+        self.hex_table.move_cursor(
+            row=row_to_show, column=col_to_show, animate=False, scroll=True
+        )
+        stats.update(
+            f"File {self.binfile.path} {self.binfile.size} bytes | {endian_mode} Width:{self.width}"
+        )
 
     def action_toggle_endianness(self):
         """Toggle between little-endian and big-endian display."""
         self.little_endian = not self.little_endian
+        self.refresh_display()
+
+    def action_toggle_width(self):
+        """Cycle between width options."""
+        current_index = self.WIDTH_OPTIONS.index(self.width)
+        new_index = (current_index + 1) % len(self.WIDTH_OPTIONS)
+        self.width = self.WIDTH_OPTIONS[new_index]
+        self.set_columns(self.hex_table)
         self.refresh_display()
 
     def action_goto_offset(self):
@@ -181,49 +213,31 @@ class HexTex(App):
             try:
                 new_offset = int(offset_str, 16)
                 if 0 <= new_offset < self.binfile.size:
-                    self.offset = new_offset & ~0xF
-                    self.refresh_display()
+                    self.offset = new_offset
+                    rows = self.offset // self.row_depth
+                    cols = (self.offset % self.row_depth) // self.width
+                    self.hex_table.move_cursor(
+                        row=rows, column=cols, animate=False, scroll=True
+                    )
+                    # the change callback will update both tables
             except ValueError:
                 pass  # Ignore invalid input
 
         self.push_screen(GotoScreen(), new_offset)
 
-    def on_key(self, event):
-        if event.key == "q":
-            self.exit()
-
-        if event.key == "up":
-            new_offset = max(
-                0, min(self.offset - self.columns, self.binfile.size - self.columns)
+    def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
+        """if the event is from the hex table, update the ascii table and vice versa"""
+        if event.data_table.id == "hex-view":
+            row = event.coordinate.row
+            column = event.coordinate.column
+            self.offset = (row * self.row_depth) + (column)
+            self.ascii_table.move_cursor(
+                row=row, column=column, animate=False, scroll=True
             )
-            if new_offset < self.binfile.size:
-                self.offset = new_offset
-                self.refresh_display()
-
-        if event.key == "down":
-            new_offset = min(self.offset + self.columns, self.binfile.size - self.count)
-            if new_offset < self.binfile.size:
-                self.offset = new_offset
-                self.refresh_display()
-
-        if event.key == "pageup":
-            new_offset = max(
-                0, min(self.offset - self.count, self.binfile.size - self.columns)
+        if event.data_table.id == "ascii-view":
+            row = event.coordinate.row
+            column = event.coordinate.column
+            self.offset = (row * self.row_depth) + (column)
+            self.hex_table.move_cursor(
+                row=row, column=column, animate=False, scroll=True
             )
-            if new_offset < self.binfile.size:
-                self.offset = new_offset
-                self.refresh_display()
-
-        if event.key == "pagedown":
-            new_offset = min(self.offset + self.count, self.binfile.size - self.count)
-            if new_offset < self.binfile.size:
-                self.offset = new_offset
-                self.refresh_display()
-
-        if event.key == "home":
-            self.offset = 0
-            self.refresh_display()
-
-        if event.key == "end":
-            self.offset = max(0, self.binfile.size - self.count)
-            self.refresh_display()
