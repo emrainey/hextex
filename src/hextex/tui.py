@@ -98,11 +98,11 @@ class HexTex(App):
     WIDTH_OPTIONS: List[int] = [1, 2, 4, 8]
     # The byte offset of the DataTable in the top level corner of the view
     offset: int = int(0)
-    ignore_change: int = int(0)
     hex_keys: List[ColumnKey] | None = None
     ascii_keys: List[ColumnKey] | None = None
     hex_table: DataTable
     ascii_table: DataTable
+    ignore_change: bool = False
 
     def __init__(self, bf: BinFile, width: int) -> None:
         super().__init__()
@@ -250,17 +250,23 @@ class HexTex(App):
         """if the event is from the hex table, update the ascii table and vice versa"""
         if self.ignore_change:
             return
-        if event.data_table.id == "hex-view":
-            row = event.coordinate.row
-            column = event.coordinate.column
-            self.offset = (row * self.row_depth) + (column)
-            self.ascii_table.move_cursor(
-                row=row, column=column, animate=False, scroll=True
-            )
-        if event.data_table.id == "ascii-view":
-            row = event.coordinate.row
-            column = event.coordinate.column
-            self.offset = (row * self.row_depth) + (column)
-            self.hex_table.move_cursor(
-                row=row, column=column, animate=False, scroll=True
-            )
+        # Prevent infinite loop by setting flag before moving cursor
+        self.ignore_change = True
+        try:
+            if event.data_table.id == "hex-view":
+                row = event.coordinate.row
+                column = event.coordinate.column
+                self.offset = (row * self.row_depth) + (column)
+                self.ascii_table.move_cursor(
+                    row=row, column=column, animate=False, scroll=True
+                )
+            elif event.data_table.id == "ascii-view":
+                row = event.coordinate.row
+                column = event.coordinate.column
+                self.offset = (row * self.row_depth) + (column)
+                self.hex_table.move_cursor(
+                    row=row, column=column, animate=False, scroll=True
+                )
+        finally:
+            # Always reset the flag
+            self.ignore_change = False
