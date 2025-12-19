@@ -35,6 +35,44 @@ class GotoScreen(ModalScreen[str]):
             self.dismiss(input.value)
 
 
+class EditScreen(ModalScreen[str]):
+    """A modal screen to edit a hex value."""
+
+    def __init__(self, current_value: str, max_length: int, byte_offset: int) -> None:
+        super().__init__()
+        self.current_value = current_value
+        self.max_length = max_length
+        self.byte_offset = byte_offset
+
+    def compose(self) -> ComposeResult:
+        yield Grid(
+            Label(f"Edit Value at 0x{self.byte_offset:08X}", id="edit-label"),
+            Input(
+                value=self.current_value,
+                placeholder=f"{self.max_length} hex chars",
+                type="text",
+                id="edit-input",
+                restrict=r"[0-9a-fA-F]+",
+                max_length=self.max_length,
+                validate_on=["submitted"],
+            ),
+            id="dialog",
+        )
+
+    def on_mount(self) -> None:
+        """Select all text when the input is mounted."""
+        input_widget = self.query_one("#edit-input", Input)
+        input_widget.focus()
+        input_widget.action_select_all()
+
+    def on_key(self, event) -> None:
+        if event.key == "enter":
+            input_widget = self.query_one("#edit-input", Input)
+            self.dismiss(input_widget.value)
+        elif event.key == "escape":
+            self.dismiss(None)
+
+
 class HexTex(App):
     CSS = """
     Screen {
@@ -85,6 +123,8 @@ class HexTex(App):
         ("ctrl+l", "toggle_endianness", "Toggle Endianness"),
         ("ctrl+g", "goto_offset", "Go to Offset"),
         ("ctrl+w", "toggle_width", "Toggle Width"),
+        ("e", "edit_cell", "Edit Cell"),
+        ("ctrl+s", "save_file", "Save File"),
     ]
 
     cell_count: int
@@ -103,6 +143,7 @@ class HexTex(App):
     hex_table: DataTable
     ascii_table: DataTable
     ignore_change: bool = False
+    modified: bool = False
 
     def __init__(self, bf: BinFile, width: int) -> None:
         super().__init__()
@@ -206,7 +247,7 @@ class HexTex(App):
             row=row_to_show, column=col_to_show, animate=False, scroll=True
         )
         stats.update(
-            f"File {self.binfile.path} {self.binfile.size} bytes | {endian_mode} Width:{self.width}"
+            f"File {self.binfile.path} {self.binfile.size} bytes | {endian_mode} Width:{self.width}{' *MODIFIED*' if self.modified else ''}"
         )
 
     def action_toggle_endianness(self):
@@ -245,6 +286,68 @@ class HexTex(App):
                 pass  # Ignore invalid input
 
         self.push_screen(GotoScreen(), new_offset)
+
+    def action_edit_cell(self):
+        """Edit the currently selected cell value."""
+        # Get current cursor position
+        row = self.hex_table.cursor_row
+        col = self.hex_table.cursor_column
+
+        # Calculate byte offset in the file
+        byte_offset = (row * self.row_depth) + (col * self.width)
+
+        # Get current value from the cell
+        cell_value = str(self.hex_table.get_cell_at((row, col)))
+
+        # Determine max length based on width
+        max_length = self.width * 2  # 2 hex chars per byte
+
+        def handle_edit(new_value: str | None) -> None:
+            if new_value is None or new_value == "":
+                return  # User cancelled or provided empty value
+
+            try:
+                # Pad the value to the correct length if needed
+                new_value = new_value.upper().zfill(max_length)
+
+                # Convert hex string to bytes based on width and endianness
+                int_value = int(new_value, 16)
+
+                # Pack the value according to width and endianness
+                endian_prefix = "<" if self.little_endian else ">"
+                if self.width == 1:
+                    packed = struct.pack(f"{endian_prefix}B", int_value)
+                elif self.width == 2:
+                    packed = struct.pack(f"{endian_prefix}H", int_value)
+                elif self.width == 4:
+                    packed = struct.pack(f"{endian_prefix}I", int_value)
+                elif self.width == 8:
+                    packed = struct.pack(f"{endian_prefix}Q", int_value)
+
+                # Write the packed bytes back to the binary data
+                for i, byte in enumerate(packed):
+                    self.binfile.data[byte_offset + i] = byte
+
+                # Mark file as modified
+                self.modified = True
+
+                # Refresh the display to show the updated value
+                self.ignore_change = True
+                self.refresh_display()
+                self.ignore_change = False
+
+            except (ValueError, struct.error) as e:
+                # Invalid hex value or out of range
+                pass
+
+        self.push_screen(EditScreen(cell_value, max_length, byte_offset), handle_edit)
+
+    def action_save_file(self):
+        """Save the current modifications to the file."""
+        if self.modified:
+            self.binfile.save()
+            self.modified = False
+            self.refresh_display()
 
     def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
         """if the event is from the hex table, update the ascii table and vice versa"""
